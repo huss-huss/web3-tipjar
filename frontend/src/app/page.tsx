@@ -1,6 +1,7 @@
 'use client'
 
 import { TipJar } from '@/components/TipJar'
+import { activeChain } from '@/lib/chains'
 
 export default function Home() {
   return (
@@ -40,7 +41,7 @@ export default function Home() {
             <div className="inline-flex items-center space-x-6 text-sm text-gray-400">
               <div className="flex items-center space-x-2">
                 <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span>Sepolia Testnet</span>
+                <span>{activeChain.name}</span>
               </div>
               <div className="w-px h-4 bg-gray-600"></div>
               <span>Built with Next.js & Wagmi</span>
