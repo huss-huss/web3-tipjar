@@ -1,93 +1,165 @@
 'use client'
 
 import { useState } from 'react'
-import { useAccount } from 'wagmi'
-import { useWriteContract, useReadContract, useWaitForTransactionReceipt } from 'wagmi'
-import { parseEther, formatEther } from 'viem'
-import { TIPJAR_CONFIG, TIPTOKEN_CONFIG } from '@/lib/contracts'
+import {
+  useAccount,
+  usePublicClient,
+  useReadContract,
+  useWriteContract,
+} from 'wagmi'
+import { formatEther, parseEther, type Hash } from 'viem'
+import {
+  TIPJAR_CONFIG,
+  TIPTOKEN_CONFIG,
+  isContractConfigValid,
+  missingContractConfig,
+} from '@/lib/contracts'
 import { WalletConnectButton } from './WalletConnectButton'
 import { TipForm } from './TipForm'
 import { TipHistory } from './TipHistory'
 
+type TxStatus = 'idle' | 'approving' | 'tipping'
+
+/** Parse a user-entered decimal amount; returns undefined if invalid or <= 0. */
+function parseAmount(value: string): bigint | undefined {
+  try {
+    const parsed = parseEther(value.trim())
+    return parsed > 0n ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'shortMessage' in error) {
+    return String((error as { shortMessage: unknown }).shortMessage)
+  }
+  return error instanceof Error ? error.message : 'Transaction failed'
+}
+
 export function TipJar() {
   const { address, isConnected } = useAccount()
+  const publicClient = usePublicClient({ chainId: TIPJAR_CONFIG.chainId })
   const [tipAmount, setTipAmount] = useState('')
   const [tokenTipAmount, setTokenTipAmount] = useState('')
   const [isTippingETH, setIsTippingETH] = useState(true)
+  const [status, setStatus] = useState<TxStatus>('idle')
+  const [txError, setTxError] = useState<string | null>(null)
+  const [lastTxHash, setLastTxHash] = useState<Hash | null>(null)
+
+  const enabled = isContractConfigValid && !!address
 
   // Read contract data
-  const { data: totalTipsReceived } = useReadContract({
+  const { data: totalTipsReceived, refetch: refetchTotal } = useReadContract({
     ...TIPJAR_CONFIG,
     functionName: 'totalTipsReceived',
+    query: { enabled: isContractConfigValid },
   })
 
-  const { data: userTips } = useReadContract({
+  const { data: userTips, refetch: refetchUserTips } = useReadContract({
     ...TIPJAR_CONFIG,
     functionName: 'getTotalTipsByAddress',
     args: address ? [address] : undefined,
+    query: { enabled },
   })
 
-  // const { data: userTokenTips } = useReadContract({
-  //   ...TIPJAR_CONFIG,
-  //   functionName: 'getTokenTipsByAddress',
-  //   args: address && !isTippingETH ? [address, TIPTOKEN_CONFIG.address] : undefined,
-  // })
-
-  const { data: tokenBalance } = useReadContract({
+  const { data: tokenBalance, refetch: refetchTokenBalance } = useReadContract({
     ...TIPTOKEN_CONFIG,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
+    query: { enabled },
   })
 
-  // Write contract functions
-  const { writeContract: writeTipJar, data: tipHash, isPending: isTipPending } = useWriteContract()
-  const { writeContract: writeToken, data: tokenHash, isPending: isTokenPending } = useWriteContract()
-
-  // Wait for transaction receipts
-  const { isLoading: isTipConfirming } = useWaitForTransactionReceipt({
-    hash: tipHash,
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    ...TIPTOKEN_CONFIG,
+    functionName: 'allowance',
+    args: address ? [address, TIPJAR_CONFIG.address] : undefined,
+    query: { enabled },
   })
 
-  const { isLoading: isTokenConfirming } = useWaitForTransactionReceipt({
-    hash: tokenHash,
-  })
+  const { writeContractAsync } = useWriteContract()
+
+  async function waitFor(hash: Hash) {
+    setLastTxHash(hash)
+    if (!publicClient) throw new Error('No RPC client for the configured chain')
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    if (receipt.status !== 'success') throw new Error('Transaction reverted')
+  }
+
+  async function refreshAll() {
+    await Promise.all([refetchTotal(), refetchUserTips(), refetchTokenBalance(), refetchAllowance()])
+  }
 
   const handleETHTip = async () => {
-    if (!tipAmount || !address) return
-    
+    const value = parseAmount(tipAmount)
+    if (!value || !address) return
+    setTxError(null)
+    setStatus('tipping')
     try {
-      await writeTipJar({
+      const hash = await writeContractAsync({
         ...TIPJAR_CONFIG,
         functionName: 'tip',
-        value: parseEther(tipAmount),
+        value,
       })
+      await waitFor(hash)
       setTipAmount('')
+      await refreshAll()
     } catch (error) {
-      console.error('Error sending ETH tip:', error)
+      setTxError(errorMessage(error))
+    } finally {
+      setStatus('idle')
     }
   }
 
   const handleTokenTip = async () => {
-    if (!tokenTipAmount || !address) return
-    
+    const amount = parseAmount(tokenTipAmount)
+    if (!amount || !address) return
+    setTxError(null)
     try {
-      // First approve the token transfer
-      await writeToken({
-        ...TIPTOKEN_CONFIG,
-        functionName: 'approve',
-        args: [TIPJAR_CONFIG.address, parseEther(tokenTipAmount)],
-      })
-      
-      // Then send the tip
-      await writeTipJar({
+      // Approve only the exact amount, and only when the current allowance is
+      // too low. The tip must wait for the approval to be mined, otherwise
+      // transferFrom reverts with an insufficient allowance.
+      if ((allowance ?? 0n) < amount) {
+        setStatus('approving')
+        const approveHash = await writeContractAsync({
+          ...TIPTOKEN_CONFIG,
+          functionName: 'approve',
+          args: [TIPJAR_CONFIG.address, amount],
+        })
+        await waitFor(approveHash)
+      }
+
+      setStatus('tipping')
+      const tipHash = await writeContractAsync({
         ...TIPJAR_CONFIG,
         functionName: 'tipWithToken',
-        args: [TIPTOKEN_CONFIG.address, parseEther(tokenTipAmount)],
+        args: [TIPTOKEN_CONFIG.address, amount],
       })
+      await waitFor(tipHash)
       setTokenTipAmount('')
+      await refreshAll()
     } catch (error) {
-      console.error('Error sending token tip:', error)
+      setTxError(errorMessage(error))
+    } finally {
+      setStatus('idle')
     }
+  }
+
+  if (!isContractConfigValid) {
+    return (
+      <div className="bg-white/10 backdrop-blur-xl border border-yellow-500/30 rounded-3xl shadow-2xl p-12 text-center">
+        <h2 className="text-2xl font-bold text-white mb-4">Contract addresses not configured</h2>
+        <p className="text-gray-300 mb-4">
+          Copy <code className="font-mono">frontend/.env.example</code> to{' '}
+          <code className="font-mono">frontend/.env.local</code> and set:
+        </p>
+        <ul className="font-mono text-sm text-yellow-300 space-y-1">
+          {missingContractConfig.map((name) => (
+            <li key={name}>{name}</li>
+          ))}
+        </ul>
+      </div>
+    )
   }
 
   if (!isConnected) {
@@ -125,7 +197,7 @@ export function TipJar() {
             Total Tips Received
           </h3>
           <p className="text-3xl font-bold text-white">
-            {totalTipsReceived ? formatEther(totalTipsReceived as bigint) : '0'} ETH
+            {totalTipsReceived !== undefined ? formatEther(totalTipsReceived) : '0'} ETH
           </p>
         </div>
         
@@ -139,7 +211,7 @@ export function TipJar() {
             Your ETH Tips
           </h3>
           <p className="text-3xl font-bold text-white">
-            {userTips ? formatEther(userTips as bigint) : '0'} ETH
+            {userTips !== undefined ? formatEther(userTips) : '0'} ETH
           </p>
         </div>
         
@@ -153,7 +225,7 @@ export function TipJar() {
             Your Token Balance
           </h3>
           <p className="text-3xl font-bold text-white">
-            {tokenBalance ? formatEther(tokenBalance as bigint) : '0'} TIP
+            {tokenBalance !== undefined ? formatEther(tokenBalance) : '0'} TIP
           </p>
         </div>
       </div>
@@ -203,7 +275,7 @@ export function TipJar() {
             amount={tipAmount}
             setAmount={setTipAmount}
             onSubmit={handleETHTip}
-            isPending={isTipPending || isTipConfirming}
+            isPending={status !== 'idle'}
             currency="ETH"
             placeholder="0.01"
           />
@@ -212,10 +284,29 @@ export function TipJar() {
             amount={tokenTipAmount}
             setAmount={setTokenTipAmount}
             onSubmit={handleTokenTip}
-            isPending={isTokenPending || isTokenConfirming}
+            isPending={status !== 'idle'}
             currency="TIP"
             placeholder="10"
           />
+        )}
+
+        {status === 'approving' && (
+          <p className="mt-6 text-center text-sm text-gray-300">
+            Step 1 of 2: approving TIP for the jar...
+          </p>
+        )}
+        {status === 'tipping' && (
+          <p className="mt-6 text-center text-sm text-gray-300">Sending tip and waiting for confirmation...</p>
+        )}
+        {txError && (
+          <div role="alert" className="mt-6 bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-center">
+            <p className="text-red-400 text-sm break-words">{txError}</p>
+          </div>
+        )}
+        {lastTxHash && status === 'idle' && !txError && (
+          <p className="mt-6 text-center text-xs text-gray-400 font-mono break-all">
+            Last transaction: {lastTxHash}
+          </p>
         )}
       </div>
 

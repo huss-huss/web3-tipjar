@@ -1,7 +1,7 @@
 'use client'
 
 import { useReadContract } from 'wagmi'
-import { TIPJAR_CONFIG } from '@/lib/contracts'
+import { TIPJAR_CONFIG, TIPTOKEN_CONFIG } from '@/lib/contracts'
 import { formatEther } from 'viem'
 
 interface TipHistoryProps {
@@ -9,9 +9,8 @@ interface TipHistoryProps {
 }
 
 export function TipHistory({ address }: TipHistoryProps) {
-  // Read recent tip events (this would need to be implemented with event logs in a real app)
-  // For now, we'll just show the user's total tips
-  
+  // Lifetime totals from contract storage. A full per-tip history would come
+  // from Tipped / TokenTipped event logs.
   const { data: userETHTips } = useReadContract({
     ...TIPJAR_CONFIG,
     functionName: 'getTotalTipsByAddress',
@@ -21,7 +20,7 @@ export function TipHistory({ address }: TipHistoryProps) {
   const { data: userTokenTips } = useReadContract({
     ...TIPJAR_CONFIG,
     functionName: 'getTokenTipsByAddress',
-    args: address ? [address, '0x0000000000000000000000000000000000000000' as `0x${string}`] : undefined,
+    args: address ? [address, TIPTOKEN_CONFIG.address] : undefined,
   })
 
   if (!address) return null
@@ -51,7 +50,7 @@ export function TipHistory({ address }: TipHistoryProps) {
               <span className="text-gray-300 font-medium">ETH Tips Sent</span>
             </div>
             <span className="font-mono font-bold text-white text-lg">
-              {userETHTips ? formatEther(userETHTips as bigint) : '0'} ETH
+              {userETHTips !== undefined ? formatEther(userETHTips) : '0'} ETH
             </span>
           </div>
         </div>
@@ -67,7 +66,7 @@ export function TipHistory({ address }: TipHistoryProps) {
               <span className="text-gray-300 font-medium">Token Tips Sent</span>
             </div>
             <span className="font-mono font-bold text-white text-lg">
-              {userTokenTips ? formatEther(userTokenTips as bigint) : '0'} TIP
+              {userTokenTips !== undefined ? formatEther(userTokenTips) : '0'} TIP
             </span>
           </div>
         </div>

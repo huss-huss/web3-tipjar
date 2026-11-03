@@ -1,55 +1,31 @@
 'use client'
 
 import { useState } from 'react'
-import { useAccount, useConnect, useDisconnect } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 
 export function WalletConnectButton() {
   const { address, isConnected } = useAccount()
-  const { connect, connectors, isPending, error } = useConnect()
+  const { connectAsync, connectors, error } = useConnect()
   const { disconnect } = useDisconnect()
   const [connectingTo, setConnectingTo] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<string | null>(null)
 
-  // Debug: Log available connectors and wallet detection
-  console.log('Available connectors:', connectors.map(c => ({ name: c.name, target: c.target })))
-  console.log('Window.ethereum:', typeof window !== 'undefined' ? {
-    exists: !!window.ethereum,
-    isMetaMask: window.ethereum?.isMetaMask,
-    isCoinbaseWallet: window.ethereum?.isCoinbaseWallet,
-    isRainbow: window.ethereum?.isRainbow,
-    isTrust: window.ethereum?.isTrust
-  } : 'Server side')
-
-  const handleConnect = async (connector: any) => {
+  const handleConnect = async (connector: Connector) => {
     setConnectingTo(connector.uid)
+    setLocalError(null)
     try {
-      // Check if wallet is available for injected connectors
-      if (connector.name === 'Injected' && typeof window !== 'undefined' && !window.ethereum) {
-        throw new Error('No wallet detected. Please install a Web3 wallet like MetaMask, Coinbase Wallet, or Rainbow.')
+      if (connector.type === 'injected' && !(await connector.getProvider())) {
+        throw new Error('No browser wallet detected. Install a wallet such as MetaMask.')
       }
-      
-      // Check for specific wallet types based on target
-      if (connector.target === 'coinbaseWallet' && typeof window !== 'undefined' && !window.ethereum?.isCoinbaseWallet) {
-        throw new Error('Coinbase Wallet not detected. Please install Coinbase Wallet extension.')
-      }
-      if (connector.target === 'rainbow' && typeof window !== 'undefined' && !window.ethereum?.isRainbow) {
-        throw new Error('Rainbow Wallet not detected. Please install Rainbow Wallet extension.')
-      }
-      if (connector.target === 'trust' && typeof window !== 'undefined' && !window.ethereum?.isTrust) {
-        throw new Error('Trust Wallet not detected. Please install Trust Wallet extension.')
-      }
-      
-      await connect({ connector })
-      // Only remove loading after successful connection
+      await connectAsync({ connector })
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Connection failed')
+    } finally {
       setConnectingTo(null)
-    } catch (err: any) {
-      console.error('Connection failed:', err)
-      // Remove loading after failed connection
-      setConnectingTo(null)
-      // Error will be shown by the error state from useConnect
     }
   }
 
-  const getWalletIcon = (connector: any) => {
+  const getWalletIcon = (connector: Connector) => {
     if (connector.name === 'MetaMask') {
       return (
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
@@ -60,13 +36,6 @@ export function WalletConnectButton() {
         </svg>
       )
     }
-    if (connector.target === 'coinbaseWallet') {
-      return (
-        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-        </svg>
-      )
-    }
     return (
       <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
@@ -74,14 +43,8 @@ export function WalletConnectButton() {
     )
   }
 
-  const getWalletName = (connector: any) => {
-    if (connector.name === 'MetaMask') return 'MetaMask'
-    if (connector.target === 'coinbaseWallet') return 'Coinbase Wallet'
-    if (connector.target === 'rainbow') return 'Rainbow'
-    if (connector.target === 'trust') return 'Trust Wallet'
-    if (connector.name === 'Injected') return 'Injected'
-    return connector.name
-  }
+  const getWalletName = (connector: Connector) =>
+    connector.name === 'Injected' ? 'Browser Wallet' : connector.name
 
   if (isConnected) {
     return (
@@ -107,39 +70,15 @@ export function WalletConnectButton() {
 
   return (
     <div className="space-y-4">
-      {error && (
+      {(localError || error) && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-center">
           <p className="text-red-400 text-sm">
-            {error.message || 'Connection failed. Please try again.'}
+            {localError ?? error?.message ?? 'Connection failed. Please try again.'}
           </p>
         </div>
       )}
       
       {connectors
-        .filter((connector) => {
-          // Show MetaMask always
-          if (connector.name === 'MetaMask') return true
-          
-          // For injected wallets, check if they're available based on target
-          if (connector.target === 'coinbaseWallet') {
-            return typeof window !== 'undefined' && (window.ethereum?.isCoinbaseWallet || false)
-          }
-          
-          if (connector.target === 'rainbow') {
-            return typeof window !== 'undefined' && (window.ethereum?.isRainbow || false)
-          }
-          
-          if (connector.target === 'trust') {
-            return typeof window !== 'undefined' && (window.ethereum?.isTrust || false)
-          }
-          
-          if (connector.name === 'Injected' && !connector.target) {
-            // Generic injected wallet - show if any wallet is available
-            return typeof window !== 'undefined' && !!window.ethereum
-          }
-          
-          return true
-        })
         .map((connector) => {
         const isConnecting = connectingTo === connector.uid
         const isDisabled = connectingTo !== null
