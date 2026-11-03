@@ -1,173 +1,202 @@
-# 🫙 Web3 Tip Jar
+# web3-tipjar
 
-A decentralized tip jar dapp where users can send tips in ETH or ERC-20 tokens on the Sepolia testnet.
+A small dApp for sending tips in ETH or an ERC-20 token: two Solidity
+contracts (Hardhat 3, OpenZeppelin 5) and a Next.js + wagmi frontend.
 
-## 🚀 Features
+I built it in 2025 as a testnet learning project and went back over it in 2026
+with a security review, a full test suite and CI. **It has not been audited
+and is not deployed on mainnet.** Run it locally or on a testnet only. See
+[SECURITY.md](SECURITY.md).
 
-- **Wallet Connection**: Connect with MetaMask, WalletConnect, or injected wallets
-- **ETH Tips**: Send tips directly in ETH
-- **Token Tips**: Send tips using custom ERC-20 tokens
-- **Real-time Stats**: View total tips received and your contribution history
-- **Responsive UI**: Beautiful, modern interface with dark mode support
+## What it does
 
-## 🛠️ Tech Stack
+- Anyone can tip the jar in ETH (`tip()`) or in any ERC-20 (`tipWithToken()`).
+- The contract keeps lifetime totals per tipper and per token.
+- Only the owner can withdraw, choosing the recipient and the amount.
+- `TipToken` (TIP) is a mintable test token for trying out token tips.
 
-### Smart Contracts
-- **Hardhat**: Development environment and testing framework
-- **Solidity**: Smart contract language
-- **OpenZeppelin**: Secure, audited contract libraries
-- **Viem**: Type-safe Ethereum library for testing
+## Architecture
 
-### Frontend
-- **Next.js 15**: React framework with App Router
-- **TypeScript**: Type-safe JavaScript
-- **Tailwind CSS**: Utility-first CSS framework
-- **Wagmi**: React hooks for Ethereum
-- **Viem**: Type-safe Ethereum library
+```mermaid
+flowchart LR
+    User["User (browser wallet)"]
+    subgraph FE["frontend/ (Next.js + wagmi + viem)"]
+        UI["TipJar UI"]
+        Cfg["NEXT_PUBLIC_* config + typed ABIs"]
+    end
+    subgraph Chain["EVM chain (Hardhat node or testnet)"]
+        Jar["TipJar.sol<br/>Ownable2Step + ReentrancyGuard"]
+        Token["TipToken.sol (ERC-20, test only)"]
+    end
+    Owner["Owner"]
 
-## 📁 Project Structure
-
-```
-web3-tipjar/
-├── contracts/                 # Smart contracts
-│   ├── contracts/
-│   │   ├── TipJar.sol        # Main tip jar contract
-│   │   └── TipToken.sol      # ERC-20 token for testing
-│   ├── test/
-│   │   └── TipJar.test.js    # Contract tests
-│   └── scripts/
-│       └── deploy.js         # Deployment script
-├── frontend/                  # Next.js frontend
-│   ├── src/
-│   │   ├── app/              # App Router pages
-│   │   ├── components/       # React components
-│   │   └── lib/              # Configuration and utilities
-│   └── contract-addresses.json # Deployed contract addresses
-└── README.md
+    User -->|"connect, sign txs"| UI
+    Cfg --> UI
+    UI -->|"tip() with ETH"| Jar
+    UI -->|"approve(jar, amount)"| Token
+    UI -->|"tipWithToken(token, amount)"| Jar
+    Jar -->|"safeTransferFrom"| Token
+    Owner -->|"withdrawETH / withdrawToken"| Jar
 ```
 
-## 🚀 Getting Started
+`contracts/scripts/export-abis.mjs` writes the compiled ABIs to
+`frontend/src/contracts/abis.ts` as `as const` arrays, so contract calls in the
+frontend are type-checked. CI fails if that file is out of date.
 
-### Prerequisites
+## Contract API
 
-- Node.js 18+ 
-- npm or yarn
-- MetaMask or compatible wallet
-- Sepolia testnet ETH (get from [faucets](https://ethereum.org/en/developers/docs/networks/#sepolia))
+### TipJar
 
-### Installation
+| Function | Access | Description |
+| --- | --- | --- |
+| `constructor(address initialOwner)` | deploy | Sets the owner. Reverts on the zero address. |
+| `tip()` payable | anyone | Tip `msg.value` wei. Reverts on 0. Emits `Tipped(tipper, amount)`. |
+| `tipWithToken(address token, uint256 amount)` | anyone | Pulls `amount` of `token` (needs prior `approve`). Credits the amount actually received. Emits `TokenTipped(tipper, token, amount)`. |
+| `withdrawETH(address to, uint256 amount)` | owner | Sends ETH to `to`. Emits `EthWithdrawn(to, amount)`. |
+| `withdrawToken(address token, address to, uint256 amount)` | owner | Sends tokens to `to`. Emits `TokenWithdrawn(token, to, amount)`. |
+| `transferOwnership(address)` / `acceptOwnership()` | owner / pending owner | Two-step ownership transfer (OpenZeppelin `Ownable2Step`). |
+| `renounceOwnership()` | owner | Always reverts (`RenounceOwnershipDisabled`) so funds cannot be locked. |
+| `totalTipsByAddress(address)`, `getTotalTipsByAddress(address)` | view | Lifetime ETH tipped by an address. |
+| `tokenTipsByAddress(address, address)`, `getTokenTipsByAddress(address, address)` | view | Lifetime amount of a token tipped by an address. |
+| `totalTipsReceived()` | view | Lifetime ETH tipped (not reduced by withdrawals). |
+| `totalTokenTipsReceived(address)` | view | Lifetime amount of a token tipped. |
+| `getETHBalance()`, `getTokenBalance(address)` | view | Current balances held by the jar. |
 
-1. **Clone the repository**
+Plain ETH transfers (no calldata) revert with `DirectEthNotAccepted`.
+
+Custom errors: `ZeroAmount`, `ZeroAddress`, `InsufficientBalance(requested, available)`,
+`EthTransferFailed`, `RenounceOwnershipDisabled`, `DirectEthNotAccepted`, plus
+OpenZeppelin's `OwnableUnauthorizedAccount`, `OwnableInvalidOwner`,
+`ReentrancyGuardReentrantCall` and `SafeERC20FailedOperation`.
+
+### TipToken (test token)
+
+| Function | Access | Description |
+| --- | --- | --- |
+| `constructor(address initialOwner)` | deploy | Mints 1,000,000 TIP to the owner. |
+| `mint(address to, uint256 amount)` | owner | Mint tokens. |
+| `batchMint(address[] recipients, uint256[] amounts)` | owner | Mint to several addresses. Reverts with `ArrayLengthMismatch`. |
+| Standard ERC-20 | anyone | OpenZeppelin `ERC20`, 18 decimals. |
+
+## Project layout
+
+```
+contracts/
+  contracts/TipJar.sol, TipToken.sol
+  contracts/mocks/         test-only attackers and odd tokens
+  test/                    node:test + viem tests
+  ignition/modules/        Hardhat Ignition deployment module
+  scripts/export-abis.mjs  writes typed ABIs to the frontend
+frontend/
+  src/lib/                 chain, wagmi and contract config (env-driven)
+  src/contracts/abis.ts    generated ABIs
+  src/components/          UI
+.github/workflows/ci.yml   contracts + frontend CI
+```
+
+## Local development
+
+Requirements: Node.js 22 and a browser wallet (for example MetaMask).
+
+```bash
+npm run install:all          # npm ci in contracts/ and frontend/
+```
+
+1. **Start a local chain** (terminal 1):
+
    ```bash
-   git clone <repository-url>
-   cd web3-tipjar
-   ```
-
-2. **Install dependencies**
-   ```bash
-   # Install root dependencies
-   npm install
-   
-   # Install contract dependencies
    cd contracts
-   npm install
-   
-   # Install frontend dependencies
-   cd ../frontend
-   npm install
+   npm run node               # Hardhat node on http://127.0.0.1:8545, chain id 31337
    ```
 
-3. **Set up environment variables**
+   The node prints funded test accounts. Their keys are public test keys:
+   import one into your wallet for local use only, and never send real funds
+   to them.
+
+2. **Deploy locally** (terminal 2):
+
    ```bash
-   # In frontend directory, create .env.local
-   echo "NEXT_PUBLIC_PROJECT_ID=your_walletconnect_project_id" > .env.local
+   cd contracts
+   npm run deploy:local       # Ignition: deploys TipJar and TipToken
    ```
 
-4. **Deploy contracts to Sepolia**
+3. **Configure the frontend**:
+
    ```bash
-   # From contracts directory
-   npx hardhat run scripts/deploy.js --network sepolia
+   cd frontend
+   cp .env.example .env.local
+   # set NEXT_PUBLIC_TIPJAR_ADDRESS and NEXT_PUBLIC_TIPTOKEN_ADDRESS
+   # to the addresses printed by the deploy step
    ```
 
-5. **Start the frontend**
+   | Variable | Meaning |
+   | --- | --- |
+   | `NEXT_PUBLIC_CHAIN_ID` | `31337` (local Hardhat, default) or `11155111` (Sepolia) |
+   | `NEXT_PUBLIC_RPC_URL` | Optional RPC URL; empty uses the chain default |
+   | `NEXT_PUBLIC_TIPJAR_ADDRESS` | Deployed TipJar address |
+   | `NEXT_PUBLIC_TIPTOKEN_ADDRESS` | Deployed TipToken address |
+
+   These values are bundled into the browser, so never put secrets in them.
+   Without valid addresses the app shows a setup message instead of sending
+   transactions.
+
+4. **Run the frontend**:
+
    ```bash
-   # From frontend directory
-   npm run dev
+   npm run dev                # http://localhost:3000
    ```
 
-6. **Open your browser**
-   Navigate to `http://localhost:3000`
+   Add the Hardhat network (RPC `http://127.0.0.1:8545`, chain id 31337) to
+   your wallet. The deployer account holds the initial TIP supply.
 
-## 🧪 Testing
+After changing a contract, run `npm run export-abis` to refresh the frontend
+ABIs.
 
-### Smart Contract Tests
+## Tests
+
 ```bash
 cd contracts
-npx hardhat test
+npm test                     # 44 tests
+npm run coverage             # line/statement coverage report
+npm run typecheck
 ```
 
-### Frontend Development
+The tests cover:
+
+- ETH and token tips, accounting and events
+- reverts for zero amounts, zero addresses, missing allowance, balance overdraw
+- fee-on-transfer tokens and tokens that return no bool (`SafeERC20`)
+- a recipient that rejects ETH
+- reentrancy attempts from a malicious owner contract (`withdrawETH`) and a
+  malicious ERC-20 (`tipWithToken`)
+- two-step ownership transfer, disabled renounce, owner-only functions
+- TipToken minting
+
+Coverage is 100% of lines and statements for `TipJar.sol` and `TipToken.sol`.
+
+Frontend checks:
+
 ```bash
 cd frontend
-npm run dev
+npm run lint
+npm run build
 ```
 
-## 📝 Smart Contracts
+## CI
 
-### TipJar.sol
-The main contract that handles:
-- ETH tips via `tip()` function
-- ERC-20 token tips via `tipWithToken()` function
-- Owner withdrawals via `withdrawETH()` and `withdrawToken()`
-- Event emission for tracking tips
+`.github/workflows/ci.yml` runs on pushes to `main` and on pull requests:
 
-### TipToken.sol
-A simple ERC-20 token for testing:
-- 1,000,000 tokens minted to deployer
-- Owner can mint additional tokens
-- Used for testing token tipping functionality
+- **contracts**: `npm ci`, compile, typecheck, test, coverage, and a check that
+  `frontend/src/contracts/abis.ts` matches the compiled contracts
+- **frontend**: `npm ci`, lint, production build
 
-## 🔧 Configuration
+## Security
 
-### Network Configuration
-The app is configured for Sepolia testnet by default. To change networks:
+The 2026 review covered reentrancy, access control, ERC-20 edge cases, input
+validation, events and the frontend approval flow. Findings, fixes and known
+limitations are in [SECURITY.md](SECURITY.md). The code is not audited and
+should not hold real funds.
 
-1. Update `hardhat.config.ts` in contracts directory
-2. Update `wagmi.ts` in frontend/src/lib directory
-3. Redeploy contracts to the new network
+## License
 
-### WalletConnect Project ID
-Get your project ID from [WalletConnect Cloud](https://cloud.reown.com) and add it to your `.env.local` file.
-
-## 🎯 Usage
-
-1. **Connect Wallet**: Click "Connect" and select your preferred wallet
-2. **Choose Tip Type**: Toggle between ETH and TIP token tips
-3. **Enter Amount**: Specify the amount you want to tip
-4. **Send Tip**: Click the tip button and confirm the transaction
-5. **View History**: Check your tipping history and total contributions
-
-## 🚧 Roadmap
-
-- [ ] Deploy to mainnet
-- [ ] Add more ERC-20 token support
-- [ ] Implement tip history with event logs
-- [ ] Add admin dashboard for withdrawals
-- [ ] Support for multiple tip recipients
-- [ ] Mobile app version
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## ⚠️ Disclaimer
-
-This is a demo project for educational purposes. Use at your own risk. Always test thoroughly before using with real funds.
+MIT, see [LICENSE](LICENSE).
