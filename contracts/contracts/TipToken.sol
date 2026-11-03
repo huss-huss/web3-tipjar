@@ -1,37 +1,31 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity 0.8.28;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title TipToken
- * @dev A simple ERC-20 token for testing the tip jar functionality
+ * @notice Simple ERC-20 used to exercise token tips on local and test networks.
+ * @dev Test token only: the owner can mint without limit. Do not treat it as
+ *      a token with any value.
  */
 contract TipToken is ERC20, Ownable {
-    constructor() ERC20("Tip Token", "TIP") Ownable(msg.sender) {
-        // Mint 1,000,000 tokens to the deployer
-        _mint(msg.sender, 1000000 * 10**decimals());
+    error ArrayLengthMismatch();
+
+    constructor(address initialOwner) ERC20("Tip Token", "TIP") Ownable(initialOwner) {
+        _mint(initialOwner, 1_000_000 * 10 ** decimals());
     }
 
-    /**
-     * @dev Mint tokens to a specific address (only owner)
-     * @param to The address to mint tokens to
-     * @param amount The amount of tokens to mint
-     */
+    /// @notice Mint tokens to `to` (owner only).
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }
 
-    /**
-     * @dev Batch mint tokens to multiple addresses (only owner)
-     * @param recipients Array of addresses to mint tokens to
-     * @param amounts Array of amounts to mint to each address
-     */
+    /// @notice Mint tokens to several addresses (owner only).
     function batchMint(address[] calldata recipients, uint256[] calldata amounts) external onlyOwner {
-        require(recipients.length == amounts.length, "Arrays length mismatch");
-        
-        for (uint256 i = 0; i < recipients.length; i++) {
+        if (recipients.length != amounts.length) revert ArrayLengthMismatch();
+        for (uint256 i = 0; i < recipients.length; ++i) {
             _mint(recipients[i], amounts[i]);
         }
     }

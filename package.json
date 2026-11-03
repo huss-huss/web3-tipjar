@@ -1,15 +1,18 @@
 {
   "name": "web3-tipjar",
   "version": "1.0.0",
-  "description": "A Web3 tip jar dapp for receiving tips in ETH and ERC-20 tokens",
+  "description": "Small tip jar dApp: Solidity contracts (Hardhat 3) and a Next.js + wagmi frontend",
   "private": true,
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "start": "cd frontend && npm run start",
-    "compile": "cd contracts && npx hardhat compile",
-    "test": "cd contracts && npx hardhat test",
-    "deploy:sepolia": "cd contracts && npx hardhat run scripts/deploy.js --network sepolia",
-    "deploy:local": "cd contracts && npx hardhat run scripts/deploy.js --network localhost"
+    "install:all": "npm ci --prefix contracts && npm ci --prefix frontend",
+    "compile": "npm run compile --prefix contracts",
+    "test": "npm test --prefix contracts",
+    "coverage": "npm run coverage --prefix contracts",
+    "node": "npm run node --prefix contracts",
+    "deploy:local": "npm run deploy:local --prefix contracts",
+    "export-abis": "npm run export-abis --prefix contracts",
+    "dev": "npm run dev --prefix frontend",
+    "lint": "npm run lint --prefix frontend",
+    "build": "npm run build --prefix frontend"
   }
 }

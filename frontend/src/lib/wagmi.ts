@@ -1,28 +1,19 @@
 import { createConfig, http } from 'wagmi'
-import { sepolia, mainnet } from 'wagmi/chains'
+import { injected } from 'wagmi/connectors'
 import { QueryClient } from '@tanstack/react-query'
-import { injected, metaMask } from 'wagmi/connectors'
+import type { Chain } from 'viem'
+import { activeChain, rpcUrl } from '@/lib/chains'
 
-// Create wagmiConfig - Using MetaMask and injected wallets
+// Only the configured chain is enabled, so the app never offers mainnet.
+// The injected connector covers MetaMask and other browser wallets (EIP-6963
+// discovery is on by default in wagmi).
 export const wagmiConfig = createConfig({
-  chains: [sepolia, mainnet],
-  connectors: [
-    metaMask(),
-    injected({
-      target: 'coinbaseWallet',
-    }),
-    injected({
-      target: 'rainbow',
-    }),
-    injected({
-      target: 'trust',
-    }),
-    injected(), // Generic injected wallet
-  ],
+  chains: [activeChain] as [Chain],
+  connectors: [injected()],
   transports: {
-    [sepolia.id]: http(),
-    [mainnet.id]: http(),
+    [activeChain.id]: http(rpcUrl),
   },
+  ssr: true,
 })
 
 export const queryClient = new QueryClient()

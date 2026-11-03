@@ -1,21 +1,23 @@
 {
-  "name": "contracts",
+  "name": "web3-tipjar-contracts",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "description": "TipJar and TipToken Solidity contracts (Hardhat 3)",
+  "private": true,
+  "license": "MIT",
   "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test nodejs",
+    "coverage": "hardhat test nodejs --coverage",
+    "typecheck": "tsc --noEmit",
+    "node": "hardhat node",
+    "deploy:local": "hardhat ignition deploy ignition/modules/TipJar.ts --network localhost",
+    "export-abis": "hardhat compile && node scripts/export-abis.mjs"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-ignition": "^3.0.2",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.0",
     "@types/node": "^22.18.1",
-    "chai": "^6.0.1",
-    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.0.4",
     "typescript": "~5.8.0",
     "viem": "^2.37.3"
