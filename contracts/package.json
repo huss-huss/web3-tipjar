@@ -7,8 +7,8 @@
   "type": "module",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test",
-    "coverage": "hardhat test --coverage",
+    "test": "hardhat test nodejs",
+    "coverage": "hardhat test nodejs --coverage",
     "typecheck": "tsc --noEmit",
     "node": "hardhat node",
     "deploy:local": "hardhat ignition deploy ignition/modules/TipJar.ts --network localhost",
